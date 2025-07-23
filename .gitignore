@@ -1,0 +1,39 @@
+# Бинарники и временные файлы
+services-healthchek-and-alert
+*.exe
+*.out
+*.bin
+*.log
+*.tmp
+*.swp
+
+# Базы данных и пользовательские данные
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+
+# Конфиги с секретами (если есть шаблон — оставьте только шаблон)
+# config.yaml
+!config.yaml.example
+
+# IDE и системные файлы
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+coverage.out
+
+# Docker
+*.pid
+
+# Node/npm (если вдруг появится фронт)
+node_modules/
+
+# Prometheus/Grafana runtime
+prometheus-data/
+grafana-data/ 
