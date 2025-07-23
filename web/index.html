@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мониторинг сервисов</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 2em; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #f0f0f0; }
+        .ok { color: green; }
+        .fail { color: red; }
+    </style>
+</head>
+<body>
+<h1>Мониторинг сервисов</h1>
+<form id="addSiteForm" style="margin-bottom:2em;">
+    <!-- <input type="text" id="siteId" placeholder="ID" required> -->
+    <input type="text" id="siteName" placeholder="Имя" required>
+    <input type="text" id="siteUrl" placeholder="URL" required>
+    <select id="siteType">
+        <option value="http">HTTP</option>
+        <option value="tcp">TCP</option>
+    </select>
+    <input type="number" id="siteInterval" placeholder="Интервал (сек)" min="5" value="60" required>
+    <button type="submit">Добавить сайт</button>
+</form>
+<!-- Фильтры -->
+<div style="margin-bottom:1em;">
+    <input type="text" id="filterName" placeholder="Фильтр по имени">
+    <select id="filterType">
+        <option value="">Все типы</option>
+        <option value="http">HTTP</option>
+        <option value="tcp">TCP</option>
+    </select>
+    <select id="filterStatus">
+        <option value="">Все статусы</option>
+        <option value="ok">OK</option>
+        <option value="fail">FAIL</option>
+    </select>
+    <button onclick="loadSites()">Применить</button>
+</div>
+<table id="sites">
+    <thead>
+    <tr><th>Имя</th><th>URL</th><th>Тип</th><th>Интервал</th><th>Статус</th><th>История</th><th>Действия</th></tr>
+    </thead>
+    <tbody></tbody>
+</table>
+<div id="history"></div>
+<canvas id="historyChart" width="800" height="300" style="display:none;"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let allSites = [];
+let lastHistory = [];
+async function loadSites() {
+    const resp = await fetch('/sites');
+    allSites = await resp.json();
+    renderSites();
+}
+// Сортировка по столбцам
+let sortKey = '', sortAsc = true;
+document.querySelectorAll('#sites th').forEach((th, idx) => {
+    th.style.cursor = 'pointer';
+    th.onclick = function() {
+        const keys = ['name','url','check_type','interval_seconds','status','history','actions'];
+        if (idx >= keys.length) return;
+        if (sortKey === keys[idx]) sortAsc = !sortAsc; else sortAsc = true;
+        sortKey = keys[idx];
+        renderSites();
+    };
+});
+function renderSites() {
+    const nameF = document.getElementById('filterName').value.toLowerCase();
+    const typeF = document.getElementById('filterType').value;
+    const statusF = document.getElementById('filterStatus').value;
+    const tbody = document.querySelector('#sites tbody');
+    tbody.innerHTML = '';
+    let sites = allSites.slice();
+    if (sortKey && sortKey !== 'history' && sortKey !== 'actions') {
+        sites.sort((a, b) => {
+            let va = a[sortKey], vb = b[sortKey];
+            if (typeof va === 'string') va = va.toLowerCase();
+            if (typeof vb === 'string') vb = vb.toLowerCase();
+            if (va < vb) return sortAsc ? -1 : 1;
+            if (va > vb) return sortAsc ? 1 : -1;
+            return 0;
+        });
+    }
+    for (const site of sites) {
+        if (nameF && !site.name.toLowerCase().includes(nameF)) continue;
+        if (typeF && site.check_type !== typeF) continue;
+        // Статус фильтруется по последней проверке
+        let status = '';
+        if (site.id && window.statusCache && window.statusCache[site.id]) status = window.statusCache[site.id];
+        if (statusF && statusF !== status) continue;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${site.name}</td><td>${site.url}</td><td>${site.check_type}</td><td>${site.interval_seconds}</td><td id="status-${site.id}">...</td><td><button onclick="showHistory('${site.id}')">Показать</button></td><td><button onclick="editSite('${site.id}')">✏️</button> <button onclick="deleteSite('${site.id}')">🗑️</button></td>`;
+        tbody.appendChild(tr);
+        loadStatus(site.id);
+    }
+}
+window.statusCache = {};
+async function loadStatus(id) {
+    const resp = await fetch(`/sites/${id}/history?limit=1`);
+    const hist = await resp.json();
+    const td = document.getElementById('status-' + id);
+    let status = '';
+    if (hist.length > 0) {
+        status = hist[0].success ? 'ok' : 'fail';
+        td.textContent = hist[0].success ? 'OK' : 'FAIL';
+        td.className = hist[0].success ? 'ok' : 'fail';
+    } else {
+        td.textContent = 'нет данных';
+    }
+    window.statusCache[id] = status;
+}
+async function showHistory(id) {
+    const resp = await fetch(`/sites/${id}/history?limit=50`);
+    const hist = await resp.json();
+    lastHistory = hist;
+    let html = `<h2>История для сайта ${id}</h2><table><tr><th>Время</th><th>Длительность</th><th>Код</th><th>Статус</th><th>Ошибка</th></tr>`;
+    const times = [], values = [], fails = [];
+    for (const h of hist) {
+        html += `<tr><td>${new Date(h.checked_at*1000).toLocaleString()}</td><td>${h.duration_ms} мс</td><td>${h.http_code||''}</td><td class="${h.success?'ok':'fail'}">${h.success?'OK':'FAIL'}</td><td>${h.error||''}</td></tr>`;
+        times.push(new Date(h.checked_at*1000).toLocaleTimeString());
+        values.push(h.duration_ms);
+        fails.push(h.success ? null : h.duration_ms);
+    }
+    html += '</table>';
+    document.getElementById('history').innerHTML = html;
+    drawChart(times, values, fails);
+}
+// Улучшить график: масштабирование, tooltips, выделение ошибок
+function drawChart(labels, values, fails) {
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    document.getElementById('historyChart').style.display = 'block';
+    if (window.historyChart) window.historyChart.destroy();
+    window.historyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Время ответа (мс)', data: values, borderColor: 'blue', fill: false, pointRadius: 2 },
+                { label: 'Ошибки', data: fails, borderColor: 'red', backgroundColor: 'rgba(255,0,0,0.2)', pointRadius: 6, showLine: false }
+            ]
+        },
+        options: {
+            responsive: false,
+            plugins: { legend: { display: true }, tooltip: { enabled: true } },
+            scales: { y: { beginAtZero: true } },
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+            elements: { point: { backgroundColor: ctx => ctx.datasetIndex === 1 ? 'red' : 'blue' } }
+        }
+    });
+}
+async function deleteSite(id) {
+    if (!confirm('Удалить сайт?')) return;
+    const resp = await fetch(`/sites/${id}`, { method: 'DELETE' });
+    if (resp.ok) {
+        loadSites();
+        document.getElementById('history').innerHTML = '';
+        document.getElementById('historyChart').style.display = 'none';
+    } else {
+        alert('Ошибка удаления');
+    }
+}
+function editSite(id) {
+    const site = allSites.find(s => s.id === id);
+    if (!site) return;
+    if (!confirm('Редактировать сайт "' + site.name + '"?')) return;
+    document.getElementById('siteName').value = site.name;
+    document.getElementById('siteUrl').value = site.url;
+    document.getElementById('siteType').value = site.check_type;
+    document.getElementById('siteInterval').value = site.interval_seconds;
+    document.getElementById('addSiteForm').dataset.editing = id;
+    document.getElementById('addSiteForm').scrollIntoView({behavior:'smooth'});
+    document.getElementById('siteName').focus();
+    // Подсветка редактируемой строки
+    document.querySelectorAll('#sites tr').forEach(tr => tr.classList.remove('editing'));
+    const tr = Array.from(document.querySelectorAll('#sites tbody tr')).find(tr => tr.innerHTML.includes(id));
+    if (tr) tr.classList.add('editing');
+    // Кнопка отмены
+    if (!document.getElementById('cancelEditBtn')) {
+        const btn = document.createElement('button');
+        btn.textContent = 'Отмена';
+        btn.type = 'button';
+        btn.id = 'cancelEditBtn';
+        btn.onclick = function() {
+            document.getElementById('addSiteForm').reset();
+            document.getElementById('addSiteForm').dataset.editing = '';
+            document.querySelectorAll('#sites tr').forEach(tr => tr.classList.remove('editing'));
+            btn.remove();
+        };
+        document.getElementById('addSiteForm').appendChild(btn);
+    }
+}
+document.getElementById('addSiteForm').onsubmit = async function(e) {
+    e.preventDefault();
+    const site = {
+        name: document.getElementById('siteName').value.trim(),
+        url: document.getElementById('siteUrl').value.trim(),
+        check_type: document.getElementById('siteType').value,
+        interval_seconds: parseInt(document.getElementById('siteInterval').value, 10)
+    };
+    const editing = e.target.dataset.editing;
+    let resp, data;
+    if (editing) {
+        resp = await fetch(`/sites/${editing}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...site, id: editing })
+        });
+        if (resp.ok) {
+            loadSites();
+            e.target.reset();
+            e.target.dataset.editing = '';
+            document.querySelectorAll('#sites tr').forEach(tr => tr.classList.remove('editing'));
+            if (document.getElementById('cancelEditBtn')) document.getElementById('cancelEditBtn').remove();
+            alert('Сайт обновлён!');
+        } else {
+            alert('Ошибка обновления сайта');
+        }
+    } else {
+        resp = await fetch('/sites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(site)
+        });
+        if (resp.ok) {
+            data = await resp.json();
+            loadSites();
+            e.target.reset();
+            alert('Сайт добавлен! ID: ' + data.id);
+        } else {
+            alert('Ошибка добавления сайта');
+        }
+    }
+};
+// Сброс фильтров
+if (!document.getElementById('resetFiltersBtn')) {
+    const btn = document.createElement('button');
+    btn.textContent = 'Сбросить фильтры';
+    btn.type = 'button';
+    btn.id = 'resetFiltersBtn';
+    btn.onclick = function() {
+        document.getElementById('filterName').value = '';
+        document.getElementById('filterType').value = '';
+        document.getElementById('filterStatus').value = '';
+        loadSites();
+    };
+    document.querySelector('div[style*="margin-bottom:1em"]')?.appendChild(btn);
+}
+// Экспорт истории в CSV
+function exportHistoryCSV() {
+    if (!lastHistory.length) return alert('Нет данных для экспорта');
+    let csv = 'Время,Длительность,Код,Статус,Ошибка\n';
+    for (const h of lastHistory) {
+        csv += `${new Date(h.checked_at*1000).toLocaleString()},${h.duration_ms},${h.http_code||''},${h.success?'OK':'FAIL'},${h.error||''}\n`;
+    }
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'history.csv';
+    a.click();
+}
+// Кнопка экспорта
+if (!document.getElementById('exportHistoryBtn')) {
+    const btn = document.createElement('button');
+    btn.textContent = 'Экспорт истории в CSV';
+    btn.type = 'button';
+    btn.id = 'exportHistoryBtn';
+    btn.onclick = exportHistoryCSV;
+    document.getElementById('history').insertAdjacentElement('beforebegin', btn);
+}
+loadSites();
+</script>
+<style>
+.editing { background: #ffe; }
+#sites th { user-select: none; }
+#sites tr[draggable="true"] { cursor: move; }
+</style>
+</body>
+</html> 

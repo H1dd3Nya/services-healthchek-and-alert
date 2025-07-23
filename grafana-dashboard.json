@@ -1,0 +1,61 @@
+{
+  "id": null,
+  "uid": "services-healthcheck",
+  "title": "Services Healthcheck",
+  "tags": ["monitoring", "services"],
+  "timezone": "browser",
+  "schemaVersion": 30,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Успешные проверки",
+      "targets": [
+        {"expr": "sum by(site_id) (increase(service_check_success_total[5m]))", "legendFormat": "{{site_id}}"}
+      ],
+      "datasource": "Prometheus",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Ошибки проверок",
+      "targets": [
+        {"expr": "sum by(site_id) (increase(service_check_fail_total[5m]))", "legendFormat": "{{site_id}}"}
+      ],
+      "datasource": "Prometheus",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Время ответа (ms)",
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(service_check_duration_ms_bucket[5m])) by (le,site_id))", "legendFormat": "95% {{site_id}}"}
+      ],
+      "datasource": "Prometheus",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Отправленные алерты",
+      "targets": [
+        {"expr": "sum by(site_id) (increase(service_alert_sent_total[5m]))", "legendFormat": "{{site_id}}"}
+      ],
+      "datasource": "Prometheus",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}
+    },
+    {
+      "type": "stat",
+      "title": "Отслеживаемых сайтов",
+      "targets": [
+        {"expr": "service_sites_tracked", "legendFormat": "sites"}
+      ],
+      "datasource": "Prometheus",
+      "gridPos": {"x": 0, "y": 16, "w": 6, "h": 4}
+    }
+  ],
+  "templating": {"list": []},
+  "annotations": {"list": []}
+} 

@@ -1,0 +1,13 @@
+smtp:
+  host: smtp.example.com
+  port: "587"
+  username: user@example.com
+  password: secret
+  from: user@example.com
+
+telegram:
+  bot_token: ""
+  chat_id: "" 
+
+alert_retries: 3
+max_alerts_per_incident: 2
